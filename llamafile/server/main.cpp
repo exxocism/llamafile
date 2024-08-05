@@ -20,12 +20,15 @@
 
 #include "llama.cpp/llama.h"
 #include "llamafile/llamafile.h"
+#include "llamafile/pool.h"
 #include "llamafile/version.h"
 
 #include "log.h"
+#include "model.h"
 #include "server.h"
 #include "signals.h"
 #include "time.h"
+#include "tokenbucket.h"
 
 Server* g_server;
 llama_model* g_model;
@@ -36,7 +39,7 @@ main(int argc, char* argv[])
     ShowCrashReports();
     llamafile_check_cpu();
     if (llamafile_has(argv, "--version")) {
-        puts("llamafile-server v" LLAMAFILE_VERSION_STRING);
+        puts("llamafiler v" LLAMAFILE_VERSION_STRING);
         exit(0);
     }
 
@@ -44,6 +47,7 @@ main(int argc, char* argv[])
     LoadZipArgs(&argc, &argv);
     llamafile_get_flags(argc, argv);
     time_init();
+    tokenbucket_init();
 
     // we must disable the llama.cpp logger
     // otherwise pthread_cancel() will cause deadlocks
@@ -74,7 +78,17 @@ main(int argc, char* argv[])
     set_thread_name("server");
     g_server = new Server(create_listening_socket(FLAG_listen));
     for (int i = 0; i < FLAG_workers; ++i)
-        unassert(!g_server->spawn());
+        npassert(!g_server->spawn());
+
+    // install security
+    if (!FLAG_unsecure) {
+        if (pledge(0, 0)) {
+            SLOG("warning: this OS doesn't support pledge() security\n");
+        } else if (pledge("stdio anet", 0)) {
+            perror("pledge");
+            exit(1);
+        }
+    }
 
     // run server
     signals_init();
@@ -84,15 +98,17 @@ main(int argc, char* argv[])
     signals_destroy();
 
     // shutdown server
-    LOG("shutdown");
+    SLOG("shutdown");
     g_server->shutdown();
     g_server->close();
     delete g_server;
     llama_free_model(g_model);
+    tokenbucket_destroy();
     time_destroy();
-    LOG("exit");
+    SLOG("exit");
 
     // quality assurance
+    llamafile_task_shutdown();
     while (!pthread_orphan_np())
         pthread_decimate_np();
     CheckForMemoryLeaks();

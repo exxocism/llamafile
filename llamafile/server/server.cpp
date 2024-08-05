@@ -21,10 +21,11 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <stdio.h>
-#include <sys/auxv.h>
 #include <sys/socket.h>
 #include <time.h>
+#include <unistd.h>
 
+#include "llamafile/crash.h"
 #include "llamafile/llamafile.h"
 
 #include "log.h"
@@ -37,10 +38,10 @@ Server::Server(int fd) : fd(fd)
 
 Server::~Server()
 {
-    unassert(fd == -1);
-    unassert(!worker_count.load(std::memory_order_relaxed));
-    unassert(dll_is_empty(active_workers));
-    unassert(dll_is_empty(idle_workers));
+    npassert(fd == -1);
+    npassert(!worker_count.load(std::memory_order_relaxed));
+    npassert(dll_is_empty(active_workers));
+    npassert(dll_is_empty(idle_workers));
     pthread_mutex_destroy(&lock_);
     pthread_cond_destroy(&cond_);
 }
@@ -103,9 +104,9 @@ Server::spawn()
     pthread_attr_t attr;
     worker = new Worker(this);
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 65536);
-    pthread_attr_setguardsize(&attr, getauxval(AT_PAGESZ));
+    pthread_attr_setguardsize(&attr, sysconf(_SC_PAGESIZE));
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setsigaltstacksize_np(&attr, sysconf(_SC_MINSIGSTKSZ) + 16384);
     if ((err = pthread_create(&worker->th, &attr, worker_thread, worker)))
         delete worker;
     pthread_attr_destroy(&attr);
@@ -113,7 +114,7 @@ Server::spawn()
 }
 
 int
-Server::accept()
+Server::accept(unsigned* out_ip)
 {
     // accept connection
     sockaddr_in clientaddr;
@@ -146,7 +147,9 @@ Server::accept()
     }
 
     if (FLAG_verbose >= 2)
-        LOG("accept");
+        SLOG("accept");
+    if (out_ip)
+        *out_ip = ip;
     return clifd;
 }
 

@@ -6,6 +6,8 @@
 extern "C" {
 #endif
 
+extern bool FLAGS_READY;
+extern bool FLAG_fast;
 extern bool FLAG_log_disable;
 extern bool FLAG_mlock;
 extern bool FLAG_mmap;
@@ -13,12 +15,15 @@ extern bool FLAG_nocompile;
 extern bool FLAG_precise;
 extern bool FLAG_recompile;
 extern bool FLAG_tinyblas;
+extern bool FLAG_trace;
 extern bool FLAG_trap;
 extern bool FLAG_unsecure;
 extern const char *FLAG_file;
+extern const char *FLAG_ip_header;
 extern const char *FLAG_listen;
 extern const char *FLAG_model;
 extern const char *FLAG_prompt;
+extern double FLAG_token_rate;
 extern float FLAG_temp;
 extern int FLAG_batch;
 extern int FLAG_ctx;
@@ -33,8 +38,11 @@ extern int FLAG_n_gpu_layers;
 extern int FLAG_seed;
 extern int FLAG_split_mode;
 extern int FLAG_threads;
+extern int FLAG_token_burst;
+extern int FLAG_token_cidr;
 extern int FLAG_ubatch;
 extern int FLAG_verbose;
+extern int FLAG_warmup;
 extern int FLAG_workers;
 
 struct llamafile;
@@ -46,6 +54,8 @@ bool llamafile_seek(struct llamafile *, size_t, int);
 void *llamafile_content(struct llamafile *);
 size_t llamafile_tell(struct llamafile *);
 size_t llamafile_size(struct llamafile *);
+size_t llamafile_position(struct llamafile *);
+bool llamafile_eof(struct llamafile *file);
 FILE *llamafile_fp(struct llamafile *);
 void llamafile_ref(struct llamafile *);
 void llamafile_unref(struct llamafile *);

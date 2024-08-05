@@ -2,21 +2,21 @@
 #── vi: set noet ft=make ts=8 sw=8 fenc=utf-8 :vi ────────────────────┘
 
 PREFIX = /usr/local
-COSMOCC = .cosmocc/3.5.4
+COSMOCC = .cosmocc/3.6.2
 TOOLCHAIN = $(COSMOCC)/bin/cosmo
 
-AR = $(TOOLCHAIN)ar
 CC = $(TOOLCHAIN)cc
 CXX = $(TOOLCHAIN)c++
+AR = $(COSMOCC)/bin/ar.ape
 ZIPOBJ = $(COSMOCC)/bin/zipobj
 MKDEPS = $(COSMOCC)/bin/mkdeps
 INSTALL = install
 
 ARFLAGS = rcsD
 CXXFLAGS = -frtti -std=gnu++23
-CCFLAGS = -g -ggdb -O3 -fexceptions -fsignaling-nans -ffunction-sections -fdata-sections
+CCFLAGS = -O2 -fexceptions -fsignaling-nans -ffunction-sections -fdata-sections
 CPPFLAGS_ = -iquote. -mcosmo -DGGML_MULTIPLATFORM -Wno-attributes -DLLAMAFILE_DEBUG
-TARGET_ARCH = -Xx86_64-mavx -Xx86_64-mtune=znver4
+TARGET_ARCH = -Xx86_64-mtune=znver4
 
 TMPDIR = o//tmp
 IGNORE := $(shell mkdir -p $(TMPDIR))
@@ -52,5 +52,5 @@ clean:; rm -rf o
 .PHONY: distclean
 distclean:; rm -rf o .cosmocc
 
-.cosmocc/3.5.4:
-	build/download-cosmocc.sh $@ 3.5.4 1e822906021a5eb56172b4e89840c0b0cd7db97b718355a41414b4ca913171e0
+.cosmocc/3.6.2:
+	build/download-cosmocc.sh $@ 3.6.2 268aa82d9bfd774f76951b250f87b8edcefd5c754b8b409e1639641e8bd8d5bc

@@ -34,8 +34,9 @@ struct Worker
     Worker(Server*);
     void run();
     void begin();
-    void handle(void);
+    void handle();
     void end();
+    void deprioritize();
     void retire();
     void kill();
 };

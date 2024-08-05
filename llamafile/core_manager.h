@@ -16,31 +16,19 @@
 // limitations under the License.
 
 #pragma once
-#include <stdatomic.h>
+#include <pthread.h>
 
-template <typename T>
-class RefCounted {
+class CoreManager {
   public:
-    RefCounted() : refs_(ATOMIC_VAR_INIT(0)) {
-    }
-
-    virtual ~RefCounted() {
-        if (atomic_load_explicit(&refs_, memory_order_relaxed) != -1)
-            __builtin_trap();
-    }
-
-    T *ref() {
-        atomic_fetch_add_explicit(&refs_, 1, memory_order_relaxed);
-        return (T *)this;
-    }
-
-    void unref() {
-        if (atomic_fetch_sub_explicit(&refs_, 1, memory_order_release))
-            return;
-        atomic_thread_fence(memory_order_acquire);
-        delete this;
-    }
+    CoreManager();
+    int acquire(int, int);
+    void release(int);
 
   private:
-    atomic_int refs_;
+    int used_;
+    int total_;
+    pthread_cond_t cv_;
+    pthread_mutex_t mu_;
 };
+
+extern CoreManager g_core_manager;

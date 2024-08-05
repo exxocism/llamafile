@@ -24,9 +24,11 @@
 
 #include "llama.cpp/llama.h"
 
+#include "cleanup.h"
 #include "fastjson.h"
 #include "json.h"
 #include "log.h"
+#include "model.h"
 #include "utils.h"
 
 struct EmbeddingParams
@@ -36,8 +38,6 @@ struct EmbeddingParams
     ctl::string_view prompt;
     ctl::string content;
 };
-
-extern llama_model* g_model;
 
 void
 normalize_embeddings(const float* inp, float* out, int n)
@@ -51,7 +51,7 @@ normalize_embeddings(const float* inp, float* out, int n)
         out[i] = inp[i] * norm;
 }
 
-void
+static void
 add_token_to_batch(struct llama_batch& batch,
                    llama_token id,
                    llama_pos pos,
@@ -68,32 +68,6 @@ add_token_to_batch(struct llama_batch& batch,
 }
 
 void
-cleanup_float_vector(void* arg)
-{
-    delete (ctl::vector<float>*)arg;
-}
-
-void
-cleanup_token_vector(void* arg)
-{
-    delete (ctl::vector<llama_token>*)arg;
-}
-
-void
-cleanup_llama_batch(void* arg)
-{
-    llama_batch* batch = (llama_batch*)arg;
-    llama_batch_free(*batch);
-    delete batch;
-}
-
-void
-cleanup_llama_context(void* arg)
-{
-    llama_free((llama_context*)arg);
-}
-
-void
 cleanup_embedding_params(void* arg)
 {
     delete (EmbeddingParams*)arg;
@@ -104,15 +78,7 @@ Client::get_embedding_params(EmbeddingParams* params)
 {
     params->add_special = atob(or_empty(param("add_special")), true);
     params->parse_special = atob(or_empty(param("parse_special")), false);
-
-    // get prompt
-    //
-    //   1. Allow GET "/tokenize?prompt=foo"
-    //   2. Allow POST {"content": "foo"} (application/json)
-    //   3. Allow POST "prompt=foo" (application/x-www-form-urlencoded)
-    //   3. Allow POST "foo" (text/plain)
-    //
-    ctl::optional<ctl::string_view> prompt = param("prompt");
+    ctl::optional<ctl::string_view> prompt = param("content");
     if (prompt.has_value()) {
         params->prompt = prompt.value();
     } else if (HasHeader(kHttpContentType)) {
@@ -126,10 +92,16 @@ Client::get_embedding_params(EmbeddingParams* params)
             ctl::pair<Json::Status, Json> json = Json::parse(payload);
             if (json.first != Json::success)
                 return send_error(400, Json::StatusToString(json.first));
+            if (!json.second.isObject())
+                return send_error(400, "JSON body must be an object");
             if (!json.second["content"].isString())
                 return send_error(400, "JSON missing \"content\" key");
             params->content = ctl::move(json.second["content"].getString());
             params->prompt = params->content;
+            if (json.second["add_special"].isBool())
+                params->add_special = json.second["add_special"].getBool();
+            if (json.second["parse_special"].isBool())
+                params->parse_special = json.second["parse_special"].getBool();
         } else {
             return send_error(501, "Content Type Not Implemented");
         }
@@ -170,10 +142,13 @@ Client::embedding()
                                params->add_special,
                                params->parse_special);
     if (count < 0) {
-        LOG("llama_tokenize failed");
+        SLOG("llama_tokenize failed");
         return send_error(405);
     }
     toks->resize(count);
+
+    if (toks->empty())
+        return send_error(400, "completely empty prompt disallowed");
 
     // truncate if exceeds model context size
     const int n_ctx_train = llama_n_ctx_train(g_model);
@@ -192,6 +167,7 @@ Client::embedding()
     cparams.n_seq_max = 1;
     cparams.n_threads = 8;
     cparams.n_threads_batch = 8;
+    cparams.attention_type = LLAMA_ATTENTION_TYPE_UNSPECIFIED;
     cparams.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_NONE;
     cparams.pooling_type = LLAMA_POOLING_TYPE_NONE;
     cparams.type_k = GGML_TYPE_F16;
@@ -199,7 +175,7 @@ Client::embedding()
     cparams.flash_attn = FLAG_flash_attn;
     llama_context* ctx = llama_new_context_with_model(g_model, cparams);
     if (!ctx) {
-        LOG("llama_new_context_with_model failed");
+        SLOG("llama_new_context_with_model failed");
         return send_error(500);
     }
     defer_cleanup(cleanup_llama_context, ctx);
@@ -214,7 +190,7 @@ Client::embedding()
 
     // inference time
     if (llama_decode(ctx, *batch) < 0) {
-        LOG("llama_decode failed");
+        SLOG("llama_decode failed");
         return send_error(500);
     }
     auto embeddings = new ctl::vector<float>(n_embd, 0);
@@ -224,7 +200,7 @@ Client::embedding()
             continue;
         const float* embd = llama_get_embeddings_ith(ctx, i);
         if (!embd) {
-            LOG("llama_get_embeddings_ith failed");
+            SLOG("llama_get_embeddings_ith failed");
             return send_error(500);
         }
         normalize_embeddings(
@@ -233,7 +209,7 @@ Client::embedding()
 
     // serialize tokens to json
     char* p = obuf.p;
-    p = stpcpy(p, "{\r\n");
+    p = stpcpy(p, "{\n");
     p = stpcpy(p, "  \"add_special\": ");
     p = encode_bool(p, params->add_special);
     p = stpcpy(p, ",\n");
@@ -254,8 +230,8 @@ Client::embedding()
         }
         p = encode_json(p, (*embeddings)[i]);
     }
-    p = stpcpy(p, "]\r\n");
-    p = stpcpy(p, "}\r\n");
+    p = stpcpy(p, "]\n");
+    p = stpcpy(p, "}\n");
     ctl::string_view content(obuf.p, p - obuf.p);
 
     // collect statistics

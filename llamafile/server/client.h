@@ -36,7 +36,10 @@
 #define HeaderEqualCase(H, S) \
     SlicesEqualCase(S, strlen(S), HeaderData(H), HeaderLength(H))
 
+struct Worker;
+struct TokenizeParams;
 struct EmbeddingParams;
+struct CompletionParams;
 
 struct Cleanup
 {
@@ -48,9 +51,14 @@ struct Cleanup
 struct Client
 {
     int fd = -1;
+    unsigned client_ip = 0;
+    unsigned effective_ip = 0;
+    bool client_ip_trusted = false;
+    bool effective_ip_trusted = false;
     bool close_connection = false;
     bool should_send_error_if_canceled;
     size_t unread = 0;
+    Worker* worker;
     timespec message_started;
     HttpMessage msg;
     Url url = {};
@@ -82,13 +90,20 @@ struct Client
     bool send2(const ctl::string_view, const ctl::string_view) __wur;
     char* append_header(const ctl::string_view, const ctl::string_view);
     bool has_at_most_this_element(int, const ctl::string_view);
+    ctl::string_view get_header(const ctl::string_view&);
 
     ctl::string_view path();
     ctl::optional<ctl::string_view> param(ctl::string_view);
 
     bool dispatch() __wur;
-    bool tokenize() __wur;
-    bool embedding() __wur;
     bool dispatcher() __wur;
+
+    bool tokenize() __wur;
+    bool get_tokenize_params(TokenizeParams*);
+
+    bool embedding() __wur;
     bool get_embedding_params(EmbeddingParams*);
+
+    bool completion() __wur;
+    bool get_completion_params(CompletionParams*);
 };

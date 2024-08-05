@@ -18,7 +18,7 @@
 #pragma once
 #include <libc/intrin/kprintf.h>
 
-#define LOG(FMT, ...) \
+#define SLOG(FMT, ...) \
     kprintf("%s %s:%d %s " FMT "\n", \
             get_log_timestamp(), \
             __FILE__, \

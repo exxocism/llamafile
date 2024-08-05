@@ -21,6 +21,7 @@
 #include <ucontext.h>
 
 #include "llamafile/crash.h"
+#include "llamafile/threadlocal.h"
 
 #include "log.h"
 #include "server.h"
@@ -43,17 +44,17 @@ static struct
 void
 on_termination_signal(int sig)
 {
-    LOG("%G", sig);
+    SLOG("%G", sig);
     g_server->terminate();
 }
 
 void
 on_crash_signal(int sig, siginfo_t* si, void* arg)
 {
-    LOG("crashed %G", sig);
+    SLOG("crashed %G", sig);
     char message[256];
     describe_crash(message, sizeof(message), sig, si, arg);
-    LOG("crashed %s", message);
+    SLOG("crashed %s", message);
     pthread_exit(PTHREAD_CANCELED);
 }
 
@@ -82,11 +83,13 @@ signals_init(void)
     sigaction(SIGABRT, &sa, &old.sigabrt);
     sigaction(SIGTRAP, &sa, &old.sigtrap);
     sigaction(SIGFPE, &sa, &old.sigfpe);
-    sigaction(SIGBUS, &sa, &old.sigbus);
-    sigaction(SIGSEGV, &sa, &old.sigsegv);
     sigaction(SIGILL, &sa, &old.sigill);
     sigaction(SIGXCPU, &sa, &old.sigxcpu);
     sigaction(SIGXFSZ, &sa, &old.sigxfsz);
+
+    sa.sa_flags |= SA_ONSTACK;
+    sigaction(SIGBUS, &sa, &old.sigbus);
+    sigaction(SIGSEGV, &sa, &old.sigsegv);
 }
 
 void

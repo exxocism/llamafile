@@ -18,6 +18,7 @@
 #include "llamafile.h"
 #include "version.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,7 +85,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < count; ++i) {
 
             char s[256];
-            int n = llama_token_to_piece(model, toks[i], s, sizeof(s), false);
+            int n = llama_token_to_piece(model, toks[i], s, sizeof(s), false, false);
             if (n < 0) {
                 fprintf(stderr, "%s: failed to convert token %d to string\n", argv[0], toks[i]);
                 exit(1);

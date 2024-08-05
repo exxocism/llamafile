@@ -27,10 +27,14 @@
 
 #include "llama.cpp/llama.h"
 #include "llamafile/llamafile.h"
+#include "llamafile/threadlocal.h"
+#include "llamafile/trust.h"
 #include "llamafile/version.h"
 
 #include "log.h"
 #include "time.h"
+#include "tokenbucket.h"
+#include "worker.h"
 
 #define STANDARD_RESPONSE_HEADERS \
     "Server: llamafile/" LLAMAFILE_VERSION_STRING "\r\n" \
@@ -38,6 +42,17 @@
     "Cache-Control: private; max-age=0\r\n"
 
 using namespace ctl;
+
+static void
+on_http_cancel(Client* client)
+{
+    if (client->should_send_error_if_canceled) {
+        fcntl(client->fd, F_SETFL, fcntl(client->fd, F_GETFL) | O_NONBLOCK);
+        client->send_error(503);
+    }
+}
+
+static ThreadLocal<Client> g_http_cancel(on_http_cancel);
 
 Client::Client()
   : cleanups(nullptr), ibuf(FLAG_http_ibuf_size), obuf(FLAG_http_obuf_size)
@@ -54,7 +69,7 @@ Client::close()
     DestroyHttpMessage(&msg);
     if (fd != -1) {
         if (FLAG_verbose >= 2)
-            LOG("close");
+            SLOG("close");
         rc = ::close(fd);
         fd = -1;
     }
@@ -141,17 +156,17 @@ Client::read_request()
             return true;
         }
         if (inmsglen == -1) {
-            LOG("bad message %m");
+            SLOG("bad message %m");
             return false;
         }
         if (ibuf.n)
-            LOG("fragmented message with %zu bytes", ibuf.n);
+            SLOG("fragmented message with %zu bytes", ibuf.n);
         ssize_t got;
         got = read(fd, ibuf.p + ibuf.n, ibuf.c - ibuf.n);
         if (!got && ibuf.n)
-            LOG("unexpected eof after %zu bytes", ibuf.n);
+            SLOG("unexpected eof after %zu bytes", ibuf.n);
         if (got == -1 && (ibuf.n || (errno != EAGAIN && errno != ECONNRESET)))
-            LOG("read failed %m");
+            SLOG("read failed %m");
         if (got <= 0)
             return false;
         ibuf.n += got;
@@ -174,6 +189,36 @@ Client::transport()
     if (!has_at_most_this_element(kHttpExpect, "100-continue")) {
         close_connection = true;
         return send_error(417);
+    }
+
+    effective_ip = client_ip;
+    effective_ip_trusted = client_ip_trusted;
+    if (FLAG_ip_header) {
+        if (is_loopback_ip(client_ip) || client_ip_trusted) {
+            ctl::string_view ip_header = get_header(FLAG_ip_header);
+            if (!ip_header.empty()) {
+                long ip;
+                if ((ip = parse_ip(ip_header)) == -1) {
+                    effective_ip = ip;
+                    effective_ip_trusted = is_trusted_ip(ip);
+                } else {
+                    SLOG("client's --ip-header wasn't a single ipv4 address");
+                    effective_ip_trusted = false;
+                }
+            }
+        } else {
+            SLOG("received direct connect from untrusted ip");
+            effective_ip_trusted = false;
+        }
+    }
+
+    if (get_header("X-Priority") == "batch") {
+        worker->deprioritize();
+    } else if (!effective_ip_trusted) {
+        if (tokenbucket_acquire(client_ip) > FLAG_token_burst) {
+            SLOG("deprioritizing");
+            worker->deprioritize();
+        }
     }
 
     if (HasHeader(kHttpTransferEncoding))
@@ -201,7 +246,7 @@ Client::transport()
     }
 
     if (FLAG_verbose >= 1)
-        LOG("get %#.*s", msg.uri.b - msg.uri.a, ibuf.p + msg.uri.a);
+        SLOG("get %#.*s", msg.uri.b - msg.uri.a, ibuf.p + msg.uri.a);
 
     if (msg.version >= 11)
         if (HeaderEqualCase(kHttpExpect, "100-continue"))
@@ -230,7 +275,7 @@ Client::send_error(int code, const char* reason)
     begin_response();
     if (!reason)
         reason = GetHttpReason(code);
-    LOG("error %d %s", code, reason);
+    SLOG("error %d %s", code, reason);
     char* p = start_response(obuf.p, code, reason);
     return send_response(obuf.p, p, string(reason) + "\r\n");
 }
@@ -300,7 +345,7 @@ Client::send(const string_view s)
     ssize_t sent;
     if ((sent = write(fd, s.data(), s.size())) != s.size()) {
         if (sent == -1 && errno != EAGAIN && errno != ECONNRESET)
-            LOG("write failed %m");
+            SLOG("write failed %m");
         return false;
     }
     return true;
@@ -317,7 +362,7 @@ Client::send2(const string_view s1, const string_view s2)
     iov[1].iov_len = s2.size();
     if ((sent = writev(fd, iov, 2)) != s1.size() + s2.size()) {
         if (sent == -1 && errno != EAGAIN && errno != ECONNRESET)
-            LOG("writev failed %m");
+            SLOG("writev failed %m");
         return false;
     }
     return true;
@@ -342,6 +387,28 @@ Client::has_at_most_this_element(int h, const string_view s)
     return true;
 }
 
+ctl::string_view
+Client::get_header(const ctl::string_view& key)
+{
+    int h;
+    size_t i, keylen;
+    if ((h = GetHttpHeader(key.data(), key.size())) != -1) {
+        if (msg.headers[h].a)
+            return ctl::string_view(ibuf.p + msg.headers[h].a,
+                                    msg.headers[h].b - msg.headers[h].a);
+    } else {
+        for (i = 0; i < msg.xheaders.n; ++i)
+            if (SlicesEqualCase(key.data(),
+                                key.size(),
+                                ibuf.p + msg.xheaders.p[i].k.a,
+                                msg.xheaders.p[i].k.b - msg.xheaders.p[i].k.a))
+                return ctl::string_view(ibuf.p + msg.xheaders.p[i].v.a,
+                                        msg.xheaders.p[i].v.b -
+                                          msg.xheaders.p[i].v.a);
+    }
+    return ctl::string_view();
+}
+
 bool
 Client::read_payload()
 {
@@ -349,9 +416,9 @@ Client::read_payload()
         ssize_t got;
         if ((got = read(fd, ibuf.p + ibuf.n, ibuf.c - ibuf.n)) <= 0) {
             if (!got)
-                LOG("unexpected eof");
+                SLOG("unexpected eof");
             if (got == -1)
-                LOG("read failed %m");
+                SLOG("read failed %m");
             return false;
         }
         ibuf.n += got;
@@ -375,10 +442,6 @@ static void
 cancel_http_request(void* arg)
 {
     Client* client = (Client*)arg;
-    if (client->should_send_error_if_canceled) {
-        fcntl(client->fd, F_SETFL, fcntl(client->fd, F_GETFL) | O_NONBLOCK);
-        client->send_error(503);
-    }
 }
 
 bool
@@ -386,9 +449,9 @@ Client::dispatch()
 {
     bool res;
     should_send_error_if_canceled = true;
-    pthread_cleanup_push(cancel_http_request, this);
+    g_http_cancel.set(this);
     res = dispatcher();
-    pthread_cleanup_pop(false);
+    g_http_cancel.set(nullptr);
     return res;
 }
 
@@ -399,6 +462,8 @@ Client::dispatcher()
         return tokenize();
     if (path() == "/embedding")
         return embedding();
+    if (path() == "/completion")
+        return completion();
     return send_error(404);
 }
 

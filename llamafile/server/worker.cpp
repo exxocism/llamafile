@@ -21,10 +21,14 @@
 #include <exception>
 #include <pthread.h>
 
-#include "client.h"
 #include "llamafile/llamafile.h"
+#include "llamafile/threadlocal.h"
+#include "llamafile/trust.h"
+
+#include "client.h"
 #include "log.h"
 #include "signals.h"
+#include "tokenbucket.h"
 
 Worker::Worker(Server* server) : server(server)
 {
@@ -40,29 +44,48 @@ Worker::kill()
 void
 Worker::begin()
 {
-    unassert(!working);
+    npassert(!working);
+    client.worker = this;
+    client.client_ip_trusted = is_trusted_ip(client.client_ip);
+    int tokens = 0;
+    if (!client.client_ip_trusted)
+        tokens = tokenbucket_acquire(client.client_ip);
     server->lock();
     dll_remove(&server->idle_workers, &elem);
     if (dll_is_empty(server->idle_workers)) {
         Dll* slowbro;
         if ((slowbro = dll_last(server->active_workers))) {
-            LOG("all threads active! dropping oldest client");
+            SLOG("all threads active! dropping oldest client");
             WORKER(slowbro)->kill();
         }
     }
     working = true;
-    dll_make_first(&server->active_workers, &elem);
+    if (tokens > FLAG_token_burst) {
+        dll_make_last(&server->active_workers, &elem);
+    } else {
+        dll_make_first(&server->active_workers, &elem);
+    }
     server->unlock();
 }
 
 void
 Worker::end()
 {
-    unassert(working);
+    npassert(working);
     server->lock();
     dll_remove(&server->active_workers, &elem);
     working = false;
     dll_make_first(&server->idle_workers, &elem);
+    server->unlock();
+}
+
+void
+Worker::deprioritize()
+{
+    npassert(working);
+    server->lock();
+    dll_remove(&server->active_workers, &elem);
+    dll_make_last(&server->active_workers, &elem);
     server->unlock();
 }
 
@@ -81,31 +104,25 @@ Worker::retire()
 }
 
 void
-Worker::handle(void)
+Worker::handle()
 {
-    if ((client.fd = server->accept()) == -1) {
-        LOG("accept returned %m");
+    if ((client.fd = server->accept(&client.client_ip)) == -1) {
+        SLOG("accept returned %m");
         return;
     }
 
     begin();
-    pthread_cleanup_push(
-      [](void* arg) {
-          Worker* worker = (Worker*)arg;
-          worker->client.close();
-          worker->end();
-      },
-      this);
 
     try {
         client.run();
     } catch (const std::exception& e) {
-        LOG("caught %s", e.what());
+        SLOG("caught %s", e.what());
     } catch (...) {
-        LOG("caught unknown exception");
+        SLOG("caught unknown exception");
     }
 
-    pthread_cleanup_pop(true);
+    client.close();
+    end();
 }
 
 void
@@ -116,19 +133,20 @@ Worker::run()
     server->worker_count.fetch_add(1, std::memory_order_acq_rel);
     server->unlock();
 
-    pthread_cleanup_push(
-      [](void* arg) {
-          Worker* worker = (Worker*)arg;
-          worker->retire();
-      },
-      this);
+    static ThreadLocal<Worker> cleanup([](Worker* worker) {
+        if (worker->working) {
+            worker->client.close();
+            worker->end();
+        }
+        worker->retire();
+    });
+    cleanup.set(this);
 
     while (!server->terminated.load(std::memory_order_acquire)) {
         sigset_t mask;
         sigemptyset(&mask);
         sigaddset(&mask, SIGHUP);
         sigaddset(&mask, SIGINT);
-        sigaddset(&mask, SIGQUIT);
         sigaddset(&mask, SIGTERM);
         sigaddset(&mask, SIGUSR1);
         sigaddset(&mask, SIGALRM);
@@ -136,5 +154,6 @@ Worker::run()
         handle();
     }
 
-    pthread_cleanup_pop(true);
+    cleanup.set(nullptr);
+    retire();
 }

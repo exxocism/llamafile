@@ -182,6 +182,7 @@ try out llamafile with different kinds of LLMs.
 | LLaMA-3-Instruct-70B   | 37.25 GB | [llama3](https://huggingface.co/Mozilla/Meta-Llama-3-8B-Instruct-llamafile/blob/main/Meta-Llama-3-Community-License-Agreement.txt) | [Meta-Llama-3-70B-Instruct.Q4\_0.llamafile](https://huggingface.co/Mozilla/Meta-Llama-3-70B-Instruct-llamafile/resolve/main/Meta-Llama-3-70B-Instruct.Q4_0.llamafile?download=true)            | [See HF repo](https://huggingface.co/Mozilla/Meta-Llama-3-70B-Instruct-llamafile)   |
 | LLaMA-3-Instruct-8B    | 5.37 GB  | [llama3](https://huggingface.co/Mozilla/Meta-Llama-3-8B-Instruct-llamafile/blob/main/Meta-Llama-3-Community-License-Agreement.txt) | [Meta-Llama-3-8B-Instruct.Q5\_K\_M.llamafile](https://huggingface.co/Mozilla/Meta-Llama-3-8B-Instruct-llamafile/resolve/main/Meta-Llama-3-8B-Instruct.Q5_K_M.llamafile?download=true)          | [See HF repo](https://huggingface.co/Mozilla/Meta-Llama-3-8B-Instruct-llamafile)    |
 | Rocket-3B              | 1.89 GB  | [cc-by-sa-4.0](https://creativecommons.org/licenses/by-sa/4.0/deed.en)                                                             | [rocket-3b.Q5\_K\_M.llamafile](https://huggingface.co/Mozilla/rocket-3B-llamafile/resolve/main/rocket-3b.Q5_K_M.llamafile?download=true)                                                       | [See HF repo](https://huggingface.co/Mozilla/rocket-3B-llamafile)                   |
+| OLMo-7B              | 5.68 GB  | [Apache 2.0](https://huggingface.co/Mozilla/OLMo-7B-0424-llamafile/blob/main/LICENSE)                                                | [OLMo-7B-0424.Q6\_K.llamafile](https://huggingface.co/Mozilla/OLMo-7B-0424-llamafile/resolve/main/OLMo-7B-0424.Q6_K.llamafile?download=true)                                                       | [See HF repo](https://huggingface.co/Mozilla/OLMo-7B-0424-llamafile)                   |
 | *Text Embedding Models* |          |                                                                                                                                    |                                                                                                                                                                                                |                                                                                     |
 | E5-Mistral-7B-Instruct  | 5.16 GB  | [MIT](https://choosealicense.com/licenses/mit/)                                                                                    | [e5-mistral-7b-instruct-Q5_K_M.llamafile](https://huggingface.co/Mozilla/e5-mistral-7b-instruct/resolve/main/e5-mistral-7b-instruct-Q5_K_M.llamafile?download=true)                            | [See HF repo](https://huggingface.co/Mozilla/e5-mistral-7b-instruct)                |
 | mxbai-embed-large-v1    | 0.7 GB   | [Apache 2.0](https://choosealicense.com/licenses/apache-2.0/)                                                                      | [mxbai-embed-large-v1-f16.llamafile](https://huggingface.co/Mozilla/mxbai-embed-large-v1-llamafile/resolve/main/mxbai-embed-large-v1-f16.llamafile?download=true)                              | [See HF Repo](https://huggingface.co/Mozilla/mxbai-embed-large-v1-llamafile)        |
@@ -269,7 +270,7 @@ enable you to work around Windows' 4GB executable file size limit.
 For Windows users, here's an example for the Mistral LLM:
 
 ```sh
-curl -L -o llamafile.exe https://github.com/Mozilla-Ocho/llamafile/releases/download/0.6/llamafile-0.6
+curl -L -o llamafile.exe https://github.com/Mozilla-Ocho/llamafile/releases/download/0.8.11/llamafile-0.8.11
 curl -L -o mistral.gguf https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.1-GGUF/resolve/main/mistral-7b-instruct-v0.1.Q4_K_M.gguf
 ./llamafile.exe -m mistral.gguf
 ```
@@ -278,7 +279,12 @@ Windows users may need to change `./llamafile.exe` to `.\llamafile.exe`
 when running the above command.
 
 
-## Gotchas
+## Gotchas and troubleshooting
+
+On any platform, if your llamafile process is immediately killed, check
+if you have CrowdStrike and then ask to be whitelisted.
+
+### Mac
 
 On macOS with Apple Silicon you need to have Xcode Command Line Tools
 installed for llamafile to be able to bootstrap itself.
@@ -286,6 +292,14 @@ installed for llamafile to be able to bootstrap itself.
 If you use zsh and have trouble running llamafile, try saying `sh -c
 ./llamafile`. This is due to a bug that was fixed in zsh 5.9+. The same
 is the case for Python `subprocess`, old versions of Fish, etc.
+
+
+#### Mac error "... cannot be opened because the developer cannot be verified"
+
+1. Immediately launch System Settings, then go to Privacy & Security. llamafile should be listed at the bottom, with a button to Allow.
+2. If not, then change your command in the Terminal to be `sudo spctl --master-disable; [llama launch command]; sudo spctl --master-enable`. This is because `--master-disable` disables _all_ checking, so you need to turn it back on after quitting llama. 
+
+### Linux 
 
 On some Linux systems, you might get errors relating to `run-detectors`
 or WINE. This is due to `binfmt_misc` registrations. You can fix that by
@@ -299,6 +313,7 @@ sudo sh -c "echo ':APE:M::MZqFpD::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/regis
 sudo sh -c "echo ':APE-jart:M::jartsr::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/register"
 ```
 
+### Windows
 As mentioned above, on Windows you may need to rename your llamafile by
 adding `.exe` to the filename.
 
@@ -308,25 +323,47 @@ that limit, so it'll work on Windows, but with larger models like
 WizardCoder 13B, you need to store the weights in a separate file. An
 example is provided above; see "Using llamafile with external weights."
 
-On WSL, it's recommended that the WIN32 interop feature be disabled:
+On WSL, there are many possible gotchas. One thing that helps solve them
+completely is this:
+
+```
+[Unit]
+Description=cosmopolitan APE binfmt service
+After=wsl-binfmt.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "echo ':APE:M::MZqFpD::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/register"
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Put that in `/etc/systemd/system/cosmo-binfmt.service`.
+
+Then run `sudo systemctl enable cosmo-binfmt`.
+
+Another thing that's helped WSL users who experience issues, is to
+disable the WIN32 interop feature:
 
 ```sh
 sudo sh -c "echo -1 > /proc/sys/fs/binfmt_misc/WSLInterop"
 ```
 
-In the instance of getting a `Permission Denied` on disabling interop through CLI, it can be permanently disabled by adding the following in `/etc/wsl.conf`
+In the instance of getting a `Permission Denied` on disabling interop
+through CLI, it can be permanently disabled by adding the following in
+`/etc/wsl.conf`
+
 ```sh
 [interop]
 enabled=false
 ```
 
+### Raspberry Pi
 On Raspberry Pi, if you get "mmap error 12" then it means your kernel is
 configured with fewer than 48 bits of address space. You need to upgrade
 to RPI 5. You can still use RPI 4 if you either (1) rebuild your kernel,
 or (2) get your SDcard OS image directly from Ubuntu (don't use RPI OS).
-
-On any platform, if your llamafile process is immediately killed, check
-if you have CrowdStrike and then ask to be whitelisted.
 
 ## Supported OSes
 
@@ -335,7 +372,7 @@ stock install:
 
 - Linux 2.6.18+ (i.e. every distro since RHEL5 c. 2007)
 - Darwin (macOS) 23.1.0+ [1] (GPU is only supported on ARM64)
-- Windows 8+ (AMD64 only)
+- Windows 10+ (AMD64 only)
 - FreeBSD 13+
 - NetBSD 9.2+ (AMD64 only)
 - OpenBSD 7+ (AMD64 only)
@@ -354,10 +391,11 @@ llamafile supports the following CPUs:
 
 - **AMD64** microprocessors must have AVX. Otherwise llamafile will
   print an error and refuse to run. This means that if you have an Intel
-  CPU, it needs to be Intel Sandybridge or newer (circa 2011+), and if
-  you have an AMD CPU, then it needs to be Bulldozer or newer (circa
-  2011+). Support for AVX512, AVX2, FMA, F16C, and VNNI are
-  conditionally enabled at runtime if you have a newer CPU.
+  CPU, it needs to be Intel Core or newer (circa 2006+), and if you have
+  an AMD CPU, then it needs to be K8 or newer (circa 2003+). Support for
+  AVX512, AVX2, FMA, F16C, and VNNI are conditionally enabled at runtime
+  if you have a newer CPU. For example, Zen4 has very good AVX512 that
+  can speed up BF16 llamafiles.
 
 - **ARM64** microprocessors must have ARMv8a+. This means everything
   from Apple Silicon to 64-bit Raspberry Pis will work, provided your

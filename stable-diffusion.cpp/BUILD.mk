@@ -12,7 +12,6 @@ STABLE_DIFFUSION_CPP_SRCS_CPP = $(filter %.cpp,$(STABLE_DIFFUSION_CPP_FILES))
 STABLE_DIFFUSION_CPP_SRCS = $(STABLE_DIFFUSION_CPP_SRCS_C) $(STABLE_DIFFUSION_CPP_SRCS_CPP)
 
 STABLE_DIFFUSION_CPP_OBJS =						\
-	$(LLAMAFILE_OBJS)						\
 	$(STABLE_DIFFUSION_CPP_SRCS_C:%.c=o/$(MODE)/%.o)		\
 	$(STABLE_DIFFUSION_CPP_SRCS_CPP:%.cpp=o/$(MODE)/%.o)
 
@@ -24,7 +23,9 @@ $(STABLE_DIFFUSION_CPP_OBJS): private					\
 
 $(STABLE_DIFFUSION_CPP_OBJS): private					\
 		CXXFLAGS +=						\
-			-frtti
+			-frtti						\
+			-Wno-alloc-size-larger-than			\
+			-Wno-deprecated-declarations
 
 o/$(MODE)/stable-diffusion.cpp/main:					\
 		o/$(MODE)/stable-diffusion.cpp/main.o			\
@@ -33,7 +34,6 @@ o/$(MODE)/stable-diffusion.cpp/main:					\
 		o/$(MODE)/stb/stb.a
 
 $(STABLE_DIFFUSION_CPP_OBJS): stable-diffusion.cpp/BUILD.mk
-$(STABLE_DIFFUSION_CPP_OBJS): private CFLAGS += -O
 
 .PHONY: o/$(MODE)/stable-diffusion.cpp
 o/$(MODE)/stable-diffusion.cpp:						\
